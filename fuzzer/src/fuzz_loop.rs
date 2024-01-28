@@ -25,6 +25,7 @@ use blockingqueue::BlockingQueue;
 use nix::unistd::close;
 use nix::unistd::pipe;
 use std::os::unix::io::RawFd;
+use inkwell::context::Context;
 
 pub fn dispatcher(
     table: &UnionTable,
@@ -36,7 +37,8 @@ pub fn dispatcher(
     bq: BlockingQueue<Solution>,
 ) {
     //let (labels,mut memcmp_data) = read_pipe(id);
-    let mut tb = SearchTaskBuilder::new(buf.len());
+    let context = Context::create();
+    let mut tb = SearchTaskBuilder::new(buf.len(), &context);
     scan_nested_tasks(
         id,
         table,
@@ -208,7 +210,7 @@ pub fn grading_loop(
             if !fpath.exists() {
                 continue;
             }
-            //wait untill file fully flushed
+            // wait untill file fully flushed
             thread::sleep(time::Duration::from_millis(1));
             let buf = read_from_file(&fpath);
             if let Some(buf) = buf {
@@ -232,6 +234,7 @@ pub fn grading_loop(
         let mut reached = 0;
         while running.load(Ordering::Relaxed) {
             let sol = bq.pop();
+            info!("got solution using fid {}", sol.fid as usize);
             if let Some(mut buf) = depot.get_input_buf(sol.fid as usize) {
                 let mut_buf = mutate(buf, &sol.sol, sol.field_index, sol.field_size);
                 let new_path = executor.run_sync(&mut_buf);
@@ -288,13 +291,10 @@ pub fn fuzz_loop(
     forklock: Arc<Mutex<u32>>,
     bq: BlockingQueue<Solution>,
 ) {
-    let mut id: u32 = 0;
-
     if restart {
-        let progress_data = std::fs::read("ce_progress").unwrap();
-        id = (&progress_data[..]).read_u32::<LittleEndian>().unwrap();
-        println!("restarting scan from id {}", id);
+        depot.load_cached_next_id();
     }
+
     let shmid = unsafe {
         libc::shmget(
             libc::IPC_PRIVATE,
@@ -319,76 +319,83 @@ pub fn fuzz_loop(
     let branch_hitcount = Arc::new(RwLock::new(HashMap::<(u64, u32, u32, u64), u32>::new()));
 
     while running.load(Ordering::Relaxed) {
-        if (id as usize) < depot.get_num_inputs() {
-            //thread::sleep(time::Duration::from_millis(10));
-            if let Some(buf) = depot.get_input_buf(id as usize) {
-                let buf_cloned = buf.clone();
-                //let path = depot.get_input_path(id).to_str().unwrap().to_owned();
-                let gbranch_hitcount = branch_hitcount.clone();
-                let gbranch_fliplist = branch_fliplist.clone();
-                let gbranch_gencount = branch_gencount.clone();
-                let solution_queue = bq.clone();
+        match depot.get_next_input() {
+            Some(id) => {
+                //thread::sleep(time::Duration::from_millis(10));
+                if let Some(buf) = depot.get_input_buf(id) {
+                    let buf_cloned = buf.clone();
+                    //let path = depot.get_input_path(id).to_str().unwrap().to_owned();
+                    let gbranch_hitcount = branch_hitcount.clone();
+                    let gbranch_fliplist = branch_fliplist.clone();
+                    let gbranch_gencount = branch_gencount.clone();
+                    let solution_queue = bq.clone();
 
-                let t_start = time::Instant::now();
+                    let t_start = time::Instant::now();
 
-                let (mut child, read_end) = executor.track(id as usize, &buf);
+                    let (mut child, read_end) = {
+                        let guard = forklock.lock().unwrap();
+                        executor.track(id, &buf)
+                    };
 
-                let handle = thread::Builder::new()
-                    .stack_size(64 * 1024 * 1024)
-                    .spawn(move || {
-                        dispatcher(
-                            table,
-                            gbranch_gencount,
-                            gbranch_fliplist,
-                            gbranch_hitcount,
-                            &buf_cloned,
-                            read_end,
-                            solution_queue,
-                        );
-                    })
-                    .unwrap();
+                    info!("Child for {} has read_end {}", id, read_end);
 
-                if handle.join().is_err() {
-                    error!("Error happened in listening thread!");
-                }
-                //dispatcher(table, gbranch_gencount, gbranch_hitcount, &buf_cloned, read_end);
-                close(read_end)
-                    .map_err(|err| warn!("close read end {:?}", err))
-                    .ok();
+                    let handle = thread::Builder::new()
+                        .stack_size(64 * 1024 * 1024)
+                        .spawn(move || {
+                            dispatcher(
+                                table,
+                                gbranch_gencount,
+                                gbranch_fliplist,
+                                gbranch_hitcount,
+                                &buf_cloned,
+                                read_end,
+                                solution_queue,
+                            );
+                        })
+                        .unwrap();
 
-                //let timeout = time::Duration::from_secs(10);
-                match child.try_wait() {
-                    //match child.wait_timeout(timeout) {
-                    Ok(Some(status)) => println!("exited with: {}", status),
-                    Ok(None) => {
-                        warn!("status not ready yet, let's really wait");
-                        child.kill();
-                        let res = child.wait();
-                        println!("result: {:?}", res);
+                    if let Err(x) = handle.join() {
+                        error!("Error happened in listening thread! tid={} err {:?}", id, x.downcast_ref::<&str>());
+                        //dispatcher(table, gbranch_gencount, gbranch_hitcount, &buf_cloned, read_end);
+
+                        // In theory, this the fd is cleaned up when File is dropped in the thread,
+                        // which should happen regardless of whether the thread succeeded or
+                        // failed.
+                        //
+                        // close(read_end)
+                        //     .map_err(|err| warn!("tid={} close read end {:?}", id, err))
+                        //     .ok();
                     }
-                    Err(e) => println!("error attempting to wait: {}", e),
-                }
 
-                let used_t1 = t_start.elapsed();
-                let used_us1 =
-                    (used_t1.as_secs() as u32 * 1000_000) + used_t1.subsec_nanos() / 1_000;
-                trace!("track time {}", used_us1);
-                id = id + 1;
-                let mut progress = Vec::new();
-                progress.write_u32::<LittleEndian>(id).unwrap();
-                std::fs::write("ce_progress", &progress)
-                    .map_err(|err| println!("{:?}", err))
-                    .ok();
-            }
-        } else {
-            if config::RUNAFL {
-                info!("run afl mutator");
-                if let Some(mut buf) = depot.get_input_buf(depot.next_random()) {
-                    run_afl_mutator(&mut executor, &mut buf);
+                    //let timeout = time::Duration::from_secs(10);
+                    match child.try_wait() {
+                        //match child.wait_timeout(timeout) {
+                        Ok(Some(status)) => println!("tid={} exited with: {}", id, status),
+                        Ok(None) => {
+                            warn!("status not ready yet, let's really wait");
+                            child.kill();
+                            let res = child.wait();
+                            println!("tid={} result: {:?}", id, res);
+                        }
+                        Err(e) => println!("tid={} error attempting to wait: {}", id, e),
+                    }
+
+                    let used_t1 = t_start.elapsed();
+                    let used_us1 =
+                        (used_t1.as_secs() as u32 * 1000_000) + used_t1.subsec_nanos() / 1_000;
+                    trace!("track time {}", used_us1);
                 }
-                thread::sleep(time::Duration::from_millis(10));
-            } else {
-                thread::sleep(time::Duration::from_secs(1));
+            },
+            None => {
+                if config::RUNAFL {
+                    info!("run afl mutator");
+                    if let Some(mut buf) = depot.get_input_buf(depot.next_random()) {
+                        run_afl_mutator(&mut executor, &mut buf);
+                    }
+                    thread::sleep(time::Duration::from_millis(10));
+                } else {
+                    thread::sleep(time::Duration::from_secs(1));
+                }
             }
         }
     }

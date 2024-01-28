@@ -5,6 +5,7 @@ use clap::{App, Arg};
 //extern crate angora;
 //extern crate angora_common;
 use fastgen::fuzz_main::*;
+use std::{thread, time};
 
 fn main() {
     let matches = App::new("angora-fuzzer")
@@ -67,6 +68,7 @@ fn main() {
              .help("Sync the seeds with AFL. Output directory should be in AFL's directory structure."))
        .get_matches();
 
+    thread::sleep(time::Duration::from_millis(10000));
     fuzz_main(
         matches.value_of("input_dir").unwrap(),
         matches.value_of("output_dir").unwrap(),

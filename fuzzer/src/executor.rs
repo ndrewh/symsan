@@ -7,7 +7,6 @@ use crate::pipe_fd::PipeFd;
 use crate::{branches, command, depot, shm_conds};
 use fastgen_common::{config, defs};
 
-use nix::unistd::{close, pipe, read, write};
 use std::io::{self};
 use std::os::unix::io::RawFd;
 use std::os::unix::process::CommandExt;
@@ -41,6 +40,7 @@ impl ConfigTrack for Command {
             match dup2(track_write, 200) {
                 Ok(_) => (),
                 Err(_) => {
+                    debug!("dup2 fail setpipe");
                     return Err(io::Error::last_os_error());
                 }
             }
@@ -351,14 +351,32 @@ impl Executor {
         ret
     }
 
+    fn pipe() -> Option<(RawFd, RawFd)> {
+        let mut fds: [libc::c_int; 2] = [0; 2];
+        let res = unsafe { libc::pipe(fds.as_mut_ptr() as *mut libc::c_int) };
+        if (res != 0) {
+            panic!("pipe() failed\n");
+        }
+
+        unsafe { Some((fds[0], fds[1])) }
+    }
+
     fn run_track(
         &self,
         target: &(String, Vec<String>),
         mem_limit: u64,
         time_limit: u64,
     ) -> (std::process::Child, RawFd) {
-        let guard = self.fl.lock().unwrap();
-        let (read_end, write_end) = pipe().unwrap();
+        let (read_end, write_end) = Self::pipe().unwrap();
+        debug!("read_end: {}, write_end: {}", read_end, write_end);
+        unsafe {
+            if (libc::fcntl(read_end, libc::F_GETFD) == -1) {
+                panic!("invalid read_end");
+            }
+            if (libc::fcntl(write_end, libc::F_GETFD) == -1) {
+                panic!("invalid write_end");
+            }
+        }
         let mut cmd = Command::new("timeout");
         let mut child = cmd
             .arg(format!("{}", EXEC_TIMEOUT))
@@ -376,7 +394,7 @@ impl Executor {
             .spawn()
             .expect("Could not run target");
 
-        close(write_end);
+        unsafe { libc::close(write_end) };
         (child, read_end)
         /*
             let timeout = time::Duration::from_secs(time_limit);

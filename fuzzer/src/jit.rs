@@ -21,26 +21,28 @@ type Addition = unsafe extern "C" fn(i32, i32) -> i32;
 
 pub struct JITEngine<'a> {
     uuid: AtomicU64,
-    context: Context,
+    context: &'a Context,
+    module: Option<Module<'a>>,
     engine: Option<ExecutionEngine<'a>>,
     //let context = Cntext::create();
 }
 
 impl<'a> JITEngine<'a> {
-    pub fn init(&'a mut self) {
+    pub fn init(&mut self) {
         let module_id = format!("rgdjit_base");
-        let module = self.context.create_module(&module_id);
-        let execution_engine = module
+        self.module = Some(self.context.create_module(&module_id));
+        let execution_engine = self.module.as_ref().unwrap()
             .create_jit_execution_engine(OptimizationLevel::None)
             .unwrap();
         self.engine = Some(execution_engine.clone());
     }
 
-    pub fn new() -> Self {
+    pub fn new(ctx: &'a Context) -> Self {
         Self {
             uuid: AtomicU64::new(0),
-            context: Context::create(),
+            context: ctx,
             engine: None,
+            module: None
         }
     }
 
@@ -481,11 +483,15 @@ impl<'a> JITEngine<'a> {
             //let return_instruction = builder.build_return(Some(&body.unwrap()));
             let return_instruction = builder.build_return(Some(&body));
             //dbg!("builder: {:?}", &builder);
-            if !module.verify().is_ok() {
-                //dbg!("module: {:?}", module.clone());
-                warn!("JIT error");
-                return None;
+            match module.verify() {
+                Err(x) => {
+                    println!("{:?}", x);
+                    warn!("Jit Error");
+                    return None;
+                },
+                _ => {}
             }
+
             assert_eq!(return_instruction.get_num_operands(), 1);
             /*
                   let execution_engine = module

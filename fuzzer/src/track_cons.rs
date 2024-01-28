@@ -35,8 +35,8 @@ fn bcount_filter(hitcount: u32, flipped: bool, msg_type: u16, localcnt: u32) -> 
     hitcount <= 5 && (!flipped) && msg_type != 3 && localcnt <= 16
 }
 
-fn qsym(pc: u64, direction: bool, msg_type: u16) -> bool {
-    let qsym_result = unsafe { qsym_filter(pc, direction) };
+fn qsym(session: u64, pc: u64, direction: bool, msg_type: u16) -> bool {
+    let qsym_result = unsafe { qsym_filter(session, pc, direction) };
     qsym_result && msg_type != 3
 }
 
@@ -58,16 +58,16 @@ pub fn scan_nested_tasks(
     let ctx = Context::new(&cfg);
     let solver = Solver::new(&ctx);
 
-    unsafe {
-        start_session();
-    }
+    let session = unsafe { start_session() };
     let t_start = time::Instant::now();
     let mut count = 0;
     let mut branch_local = HashMap::<(u64, u32), u32>::new();
-    let f = unsafe { File::from_raw_fd(pipefd) };
+    let f = unsafe { File::from_raw_fd(pipefd) }; // this will close pipefd on function return/panic
     let mut reader = BufReader::new(f);
+    debug!("scan_nested_tasks start on {}", pipefd);
     loop {
         let rawmsg = PipeMsg::from_reader(&mut reader);
+        debug!("got message {:?} on {:?}", rawmsg.is_ok(), pipefd);
         if let Ok(msg) = rawmsg {
             let mut hitcount = 1;
             let mut gencount = 0;
@@ -226,7 +226,7 @@ pub fn scan_nested_tasks(
 
                 //tb.submit_task_rust(&task, solution_queue.clone(), true, &inputs);
                 let is_flip = if config::QSYM_FILTER {
-                    qsym(msg.addr, msg.result == 1, msg.msgtype)
+                    qsym(session, msg.addr, msg.result == 1, msg.msgtype)
                 } else {
                     bcount_filter(hitcount, flipped, msg.msgtype, localcnt)
                 };
@@ -268,6 +268,7 @@ pub fn scan_nested_tasks(
             break;
         }
     }
+    unsafe { end_session(session); }
     info!("submitted {} tasks {:?}", count, t_start.elapsed());
 }
 

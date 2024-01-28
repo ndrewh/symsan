@@ -13,6 +13,7 @@ use crate::union_find::*;
 use crate::util::*;
 use blockingqueue::BlockingQueue;
 use inkwell::execution_engine::JitFunction;
+use inkwell::context::Context;
 use protobuf::CodedInputStream;
 use protobuf::Message;
 use std::cell::RefCell;
@@ -35,14 +36,29 @@ pub struct BranchDep {
 
 pub struct AstNodeWrapper(Vec<u8>);
 
-pub static mut GENGINE: Option<JITEngine> = None;
-//AstNode -> function address
-pub static mut GFUNCACHE: Option<HashMap<AstNodeWrapper, usize>> = None;
-pub static mut MISS: u32 = 0;
-pub static mut HIT: u32 = 0;
-//
-pub static mut JTIME: u32 = 0;
-pub static mut STIME: u32 = 0;
+pub struct JitState<'a> {
+    pub engine: JITEngine<'a>,
+    pub fun_cache: HashMap<AstNodeWrapper, usize>,
+    pub miss: u32,
+    pub hit: u32,
+    pub jtime: u32,
+    pub stime: u32
+}
+
+impl<'a> JitState<'a> {
+    fn new(c: &'a Context) -> Self {
+        let mut engine = JITEngine::new(c);
+        engine.init();
+        Self {
+            engine,
+            fun_cache: Default::default(),
+            miss: 0,
+            hit: 0,
+            jtime: 0,
+            stime: 0
+        }
+    }
+}
 
 impl Eq for AstNodeWrapper {}
 
@@ -145,33 +161,23 @@ impl Hash for AstNodeWrapper {
     }
 }
 
-pub struct SearchTaskBuilder {
+pub struct SearchTaskBuilder<'a> {
     pub per_session_cache: HashMap<u32, Constraint>,
     pub last_fid: u32,
     pub branch_deps: Vec<Option<BranchDep>>,
     pub uf: UnionFind,
+    pub jit: JitState<'a>,
 }
 
-pub fn init_engine() {
-    unsafe {
-        if GENGINE.is_none() {
-            GENGINE = Some(JITEngine::new());
-            GENGINE.as_mut().unwrap().init();
-        }
-        if GFUNCACHE.is_none() {
-            GFUNCACHE = Some(HashMap::new());
-        }
-    }
-}
-
-impl SearchTaskBuilder {
-    pub fn new(tainted_size: usize) -> Self {
+impl<'a> SearchTaskBuilder<'a> {
+    pub fn new(tainted_size: usize, context: &'a Context) -> Self {
         unsafe {
             Self {
                 per_session_cache: HashMap::new(),
                 last_fid: std::u32::MAX,
                 uf: UnionFind::new(tainted_size),
                 branch_deps: vec![None; tainted_size],
+                jit: JitState::new(context),
             }
         }
     }
@@ -191,13 +197,10 @@ impl SearchTaskBuilder {
     }
 
     fn task_jit(
-        &self,
+        &mut self,
         target_cons: &(Vec<Vec<Rc<Constraint>>>, bool),
     ) -> Vec<Vec<Rc<RefCell<Cons>>>> {
         unsafe {
-            let mut engine = GENGINE.as_mut().unwrap();
-            let func_cache = GFUNCACHE.as_mut().unwrap();
-
             //build cons set
             let mut cons_set = Vec::new();
             //for each land
@@ -210,29 +213,23 @@ impl SearchTaskBuilder {
                     }
                     // if !func_cache.contains_key(&AstNodeWrapper(constraint.get_node().clone())) {
                     // if !cpp_interface::contains(node_ser.as_ptr(), node_ser.len()) {
-                    if !func_cache.contains_key(&AstNodeWrapper(
+                    if !self.jit.fun_cache.contains_key(&AstNodeWrapper(
                         constraint.get_node().write_to_bytes().unwrap(),
                     )) {
                         let t_start = time::Instant::now();
                         let fun =
-                            engine.add_function(&constraint.get_node(), &cons.borrow().local_map);
+                            self.jit.engine.add_function(&constraint.get_node(), &cons.borrow().local_map);
                         if fun.is_some() {
                             let jtime = t_start.elapsed().as_micros();
 
                             let fun_extract = fun.unwrap();
-                            unsafe {
-                                JTIME += jtime as u32;
-                            }
-                            unsafe {
-                                debug!(
-                                    "miss/hit {}/{}, jitime {} totoal {}",
-                                    MISS, HIT, jtime, JTIME
-                                );
-                            }
-                            unsafe {
-                                MISS += 1;
-                            }
-                            func_cache.insert(
+                            self.jit.jtime += jtime as u32;
+                            debug!(
+                                "miss/hit {}/{}, jitime {} totoal {}",
+                                self.jit.miss, self.jit.hit, jtime, self.jit.jtime
+                            );
+                            self.jit.miss += 1;
+                            self.jit.fun_cache.insert(
                                 AstNodeWrapper(constraint.get_node().write_to_bytes().unwrap()),
                                 fun_extract,
                             );
@@ -242,13 +239,11 @@ impl SearchTaskBuilder {
                             continue;
                         }
                     } else {
-                        let fun_idx = func_cache
+                        let fun_idx = self.jit.fun_cache
                             [&AstNodeWrapper(constraint.get_node().write_to_bytes().unwrap())];
                         //let fun_idx = cpp_interface::get(node_ser.as_ptr(),node_ser.len());
                         cons.borrow_mut().set_func(fun_idx);
-                        unsafe {
-                            HIT += 1;
-                        }
+                        self.jit.hit += 1;
                         //info!("hit and jitime is {}", t_start.elapsed().as_micros());
                     }
                     row.push(cons.clone());

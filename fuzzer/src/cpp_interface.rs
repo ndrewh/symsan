@@ -17,6 +17,7 @@ extern "C" {
     //  pub fn get_next_input_info(id: *mut u32, field_size: *mut usize,
     //                          new_field_size: *mut usize);
     pub fn init_core();
-    pub fn qsym_filter(addr: u64, direction: bool) -> bool;
-    pub fn start_session();
+    pub fn qsym_filter(session: u64, addr: u64, direction: bool) -> bool;
+    pub fn start_session() -> u64;
+    pub fn end_session(s: u64);
 }
