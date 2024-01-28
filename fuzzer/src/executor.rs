@@ -22,6 +22,8 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
+const EXEC_TIMEOUT: u64 = 1000; // seconds
+
 pub fn dup2(fd: i32, device: i32) -> Result<(), &'static str> {
     match unsafe { libc::dup2(fd, device) } {
         -1 => Err("dup2 failed"),
@@ -359,7 +361,7 @@ impl Executor {
         let (read_end, write_end) = pipe().unwrap();
         let mut cmd = Command::new("timeout");
         let mut child = cmd
-            .arg("102")
+            .arg(format!("{}", EXEC_TIMEOUT))
             .arg(&target.0)
             .args(&target.1)
             //  .stdin(Stdio::null())

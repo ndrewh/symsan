@@ -40,6 +40,8 @@ fn qsym(pc: u64, direction: bool, msg_type: u16) -> bool {
     qsym_result && msg_type != 3
 }
 
+const SOLVE_TIMEOUT: u64 = 60000; // msec
+
 pub fn scan_nested_tasks(
     pipefd: RawFd,
     table: &UnionTable,
@@ -52,7 +54,7 @@ pub fn scan_nested_tasks(
     solution_queue: BlockingQueue<Solution>,
 ) {
     let mut cfg = Config::new();
-    cfg.set_timeout_msec(10000);
+    cfg.set_timeout_msec(SOLVE_TIMEOUT);
     let ctx = Context::new(&cfg);
     let solver = Solver::new(&ctx);
 

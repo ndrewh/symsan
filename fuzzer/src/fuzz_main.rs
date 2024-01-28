@@ -80,11 +80,14 @@ pub fn fuzz_main(
     init_engine();
     let mut handlers = vec![];
 
+    let first_grader = 2;
+    let first_executor = first_grader + _num_graders;
+
     for g in 0.._num_graders {
         let r = running.clone();
         let d = depot.clone();
         let b = global_branches.clone();
-        let cmd = command_option.specify(3 + g);
+        let cmd = command_option.specify(first_grader + g);
         let bg = branch_gencount.clone();
         let blist = branch_fliplist.clone();
         let fk = forklock.clone();
@@ -96,11 +99,11 @@ pub fn fuzz_main(
         handlers.push(handle);
     }
 
-    {
+    for g in 0.._num_jobs {
         let r = running.clone();
         let d = depot.clone();
         let b = global_branches.clone();
-        let cmd = command_option.specify(2);
+        let cmd = command_option.specify(first_executor + g);
         let bg = branch_gencount.clone();
         let blist = branch_fliplist.clone();
         let fk = forklock.clone();
