@@ -1,5 +1,5 @@
-use crate::file::*;
 use crate::executor::Executor;
+use crate::file::*;
 use fastgen_common::{config, defs};
 use std::{
     collections::HashMap,
@@ -25,8 +25,8 @@ pub fn sync_depot(executor: &mut Executor, running: Arc<AtomicBool>, dir: &Path)
                 if file_len < config::MAX_INPUT_LEN {
                     let buf = read_from_file(path);
                     if let Some(rawbuf) = buf {
-                      //executor.run_sync(&rawbuf);
-                      executor.run_norun(&rawbuf);
+                        //executor.run_sync(&rawbuf);
+                        executor.run_norun(&rawbuf);
                     }
                 } else {
                     warn!("Seed discarded, too long: {:?}", path);
@@ -63,7 +63,6 @@ pub fn sync_afl(
             }
         }
     }
-
 }
 
 fn get_afl_id(f: &fs::DirEntry) -> Option<usize> {
@@ -105,7 +104,7 @@ fn sync_one_afl_dir(
                             info!("sync {:?}", path);
                             let buf = read_from_file(path);
                             if let Some(rawbuf) = buf {
-                              executor.run_norun(&rawbuf);
+                                executor.run_norun(&rawbuf);
                             }
                         }
                         if id > max_id {

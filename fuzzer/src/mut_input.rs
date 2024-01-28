@@ -7,11 +7,10 @@ use std::{fmt, u8};
 //use std::u16;
 use std::{cmp, u32, u64};
 
-
 #[derive(Clone)]
 pub struct MutInput {
-  pub value: Vec<u64>,
-  disables: Vec<bool>,
+    pub value: Vec<u64>,
+    disables: Vec<bool>,
 }
 
 impl MutInput {
@@ -21,26 +20,25 @@ impl MutInput {
             disables: vec![],
         }
     }
-    
 
     pub fn val_len(&self) -> usize {
         self.value.len()
     }
 
-    pub fn assign(&mut self, input: &Vec<(u32,u8)>) {
+    pub fn assign(&mut self, input: &Vec<(u32, u8)>) {
         for v in input {
-          self.value.push(v.1 as u64);
-          self.disables.push(false);
+            self.value.push(v.1 as u64);
+            self.disables.push(false);
         }
     }
 
     pub fn update(&mut self, index: usize, direction: bool, delta: u64) {
-        if !self.disables[index] {  
-          if direction {
-            self.value[index] = self.value[index].overflowing_add(delta).0;
-          } else {
-            self.value[index] = self.value[index].overflowing_sub(delta).0;
-          }
+        if !self.disables[index] {
+            if direction {
+                self.value[index] = self.value[index].overflowing_add(delta).0;
+            } else {
+                self.value[index] = self.value[index].overflowing_sub(delta).0;
+            }
         }
     }
 
@@ -50,7 +48,7 @@ impl MutInput {
 
     pub fn reset_disable(&mut self) {
         for i in 0..self.val_len() {
-          self.disables[i] = false;
+            self.disables[i] = false;
         }
     }
     // the return value is unsigned!!
@@ -62,7 +60,6 @@ impl MutInput {
         self.value[index] = v;
     }
 
-
     pub fn get_value(&self) -> Vec<u64> {
         self.value.clone()
     }
@@ -73,7 +70,6 @@ impl MutInput {
         assert!(byte_i < self.val_len());
         self.value[byte_i] ^= 128 >> bit_i;
     }
-
 
     pub fn randomize_all(&mut self) {
         let mut rng = rand::thread_rng();
@@ -92,7 +88,7 @@ impl MutInput {
 
     pub fn randomize_all_uniform<T: Rng>(&mut self, rng: &mut T) {
         for i in 0..self.val_len() {
-          self.value[i] = rng.gen();
+            self.value[i] = rng.gen();
         }
     }
 
