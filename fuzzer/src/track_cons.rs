@@ -40,7 +40,7 @@ fn qsym(session: u64, pc: u64, direction: bool, msg_type: u16) -> bool {
     qsym_result && msg_type != 3
 }
 
-const SOLVE_TIMEOUT: u64 = 60000; // msec
+const SOLVE_TIMEOUT: u64 = 10000 * 7; // msec
 
 pub fn scan_nested_tasks(
     pipefd: RawFd,

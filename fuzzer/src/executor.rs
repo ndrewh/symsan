@@ -21,7 +21,7 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
-const EXEC_TIMEOUT: u64 = 1000; // seconds
+const EXEC_TIMEOUT: u64 = 120 * 7; // seconds
 
 pub fn dup2(fd: i32, device: i32) -> Result<(), &'static str> {
     match unsafe { libc::dup2(fd, device) } {
